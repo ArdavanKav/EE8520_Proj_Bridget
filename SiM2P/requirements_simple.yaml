@@ -1,0 +1,58 @@
+name: sim2p
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - mpi4py
+  - openmpi
+  - pip:
+    # Deep Learning
+    - torch>=2.0.0
+    - torchvision
+    - torchaudio
+    - flash-attn>=2.0.0
+    - timm>=1.0.0
+    - einops
+    
+    # Diffusion & Metrics
+    - piq
+    - clean-fid
+    - torch-fidelity
+    - torchmetrics
+    
+    # Medical Imaging
+    - nibabel
+    - monai
+    - SimpleITK
+    - antspyx
+    - pydicom
+    - dcm2niix
+    
+    # Image Processing
+    - scikit-image
+    - opencv-python
+    - albumentations
+    - imgaug
+    
+    # Data & Visualization
+    - numpy
+    - scipy
+    - pandas
+    - matplotlib
+    - h5py
+    - tqdm
+    
+    # Utilities
+    - blobfile
+    - omegaconf
+    - pyyaml
+    - wandb
+    - tensorboard
+    
+    # ML Tools
+    - scikit-learn
+    - umap-learn
