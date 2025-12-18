@@ -1,83 +1,94 @@
-# EE8520_Proj_Bridget
-MRI2PET using BBDM project
-
-### [Project Page](https://yiiitong.github.io/SiM2P/) | [Paper](https://arxiv.org/abs/2510.15556)
+# Diffusion Bridge Networks to translate PET from MRI
+Final Project for EE8520
 
 <p align="center">
   <img src="img/archi_sim2p.svg" width="100%"/>
 </p>
-
-## Overview
-
-Positron Emission Tomography (PET) imaging provides critical metabolic information for early diagnosis and monitoring of neurodegenerative diseases like Alzheimer's disease. However, PET scans are expensive, involve radiation exposure, and have limited availability compared to structural MRI. **SiM2P** addresses this challenge by leveraging diffusion bridge networks to synthesize clinical-grade PET images directly from T1-weighted MRI scans.
-
-### Key Features
-
-- **Diffusion Bridge Framework**: Learns a direct mapping from MRI to PET through a stochastic diffusion process, enabling high-fidelity cross-modality translation
-- **DiT-XL/4 Architecture**: Employs a state-of-the-art 3D Diffusion Transformer with 28 transformer blocks, flash attention, and patch-based processing for volumetric medical images
-- **Clinical Data Integration**: Incorporates tabular clinical features (demographics, brain volumes, cognitive scores) to enhance synthesis quality
-- **Variance-Preserving Diffusion**: Uses VP noise schedule with Karras weighting for stable training and high-quality generation
-
-### Method
-
-SiM2P formulates MRI-to-PET synthesis as a diffusion bridge problem. Given paired MRI-PET scans, the model learns to denoise intermediate states along a stochastic path connecting the two modalities:
-
-1. **Forward Process**: Constructs noisy intermediate states between source MRI and target PET
-2. **Denoising Network**: DiT-XL/4 transformer predicts the clean PET scan from noisy intermediates
-3. **Inference**: Iteratively denoises from MRI to generate synthetic PET
 
 ## Installation
 
 1. Create environment: `conda env create -n sim2p --file requirements.yaml`
 2. Activate environment: `conda activate sim2p`
 
+## Preprocessing
 
-## Data
+The preprocessing pipeline converts raw DICOM MRI and PET scans into standardized 80×80×80 NIfTI volumes.
 
-We used public datasets from [Alzheimer's Disease Neuroimaging Initiative (ADNI)](https://adni.loni.usc.edu/) and [Japanese Alzheimer's Disease Neuroimaging Initiative (J-ADNI)](https://pubmed.ncbi.nlm.nih.gov/29753531/). Since we are not allowed to share our data, you would need to process the data yourself. Data for training, validation, and testing should be stored in separate [HDF5](https://docs.h5py.org/en/latest/quick.html) files, using the following hierarchical format:
+### Running Preprocessing
 
-1. First level: A unique identifier, e.g. image ID.
-2. The second level always has the following entries:
-    1. A group named `MRI/T1`, containing the T1-weighted 3D MRI data.
-    2. A group named `PET/FDG`, containing the 3D FDG PET data.
-    3. A dataset named `tabular` of size 13, containing a list of non-image clinical data, including age, gender, education level, MRI brain segmentation volumes obtained by Freesurfer including cerebrospinal fluid volume, the total grey matter volume, cortical white matter volume, left hippocampus volume, right hippocampus volume, left entorhinal thickness, right entorhinal thickness, cognitive examination scores MMSE, ADAS-Cog-13, and genetic risk factor ApoE4.
-    4. A string attribute `DX` containing the diagnosis labels: `CN`, `Dementia` or `MCI`, if available.
-
-
-Finally, the HDF5 file should also contain the following meta-information in a separate group named `stats`:
 ```bash
-/stats/tabular           Group
-/stats/tabular/columns   Dataset {13}
-/stats/tabular/mean      Dataset {13}
-/stats/tabular/stddev    Dataset {13}
+# Navigate to preprocessing directory
+cd Prep_Final
+
+# Edit config.yaml with your data paths
+# data:
+#   mcsa_root: "/path/to/your/dicom/data"
+#   output_dir: "/path/to/output"
+
+# Run the preprocessing pipeline
+python run_pipeline.py --config config.yaml
+
+# For a single case test
+bash test_single.sh /path/to/subject_folder
 ```
-They are the names of the features in the clinical data, their mean, and standard deviation.
+
+See `Prep_Final/PREPROCESSING_PIPELINE.txt` for detailed documentation of each step.
 
 
-## Model training and evaluation
+### Training
 
-We provide bash files [train_sim2p.sh](train_sim2p.sh) and [test_sim2p.sh](test_sim2p.sh) for model training and evaluation. Important model variables can be set in the bash file [args.sh](args.sh). For example, the length of the clincial data input can be accustomized and assigned to `TAB_DIM`.
+To train the model:
 
-To train, run
-```
+```bash
+# Activate environment
+conda activate sim2p
+
+# Basic training (single GPU)
+CUDA_VISIBLE_DEVICES=0 python sim2p_train.py \
+  --exp my_experiment \
+  --data_dir /path/to/h5_data/ \
+  --batch_size 6 \
+  --microbatch 3 \
+  --dit_type "DiT-XL/4" \
+  --lr 1e-4 \
+  --save_interval 10000 \
+  --log_interval 50 \
+  --image_size 80 \
+  --target_modality pet \
+  --ema_rate 0.9999 \
+  --pred_mode vp \
+  --sigma_max 1 \
+  --sigma_min 0.002 \
+  --tab_dim 10
+
+# Or use the provided bash script
 bash train_sim2p.sh
 
-# to resume, set CKPT to your checkpoint, or it will automatically resume from your last checkpoint based on your experiment name.
-
+# To resume from checkpoint
 bash train_sim2p.sh $CKPT
 ```
 
-For evaluation, you need to be set `MODEL_PATH` for your checkpoint to be evaluated. Setting `--save_syn_scans True` will save the generated synthetic scans into your experiment folder. To evaluate, run
-```
-bash test_sim2p.sh $MODEL_PATH --save_syn_scans True
-```
-This script will print and also save the evaluation scores into `.txt` and `.csv` files into your experiment folder.
+### Multi-GPU Training
 
+For distributed training with multiple GPUs:
 
+```bash
+# Training on 2 GPUs (e.g., GPU 1 and 2)
+CUDA_VISIBLE_DEVICES=1,2 mpiexec -n 2 python sim2p_train.py \
+  --exp my_experiment_2gpu \
+  --data_dir /path/to/h5_data/ \
+  --batch_size 24 \
+  --microbatch 12 \
+  --dit_type "DiT-XL/4" \
+  --lr 1e-4 \
+  --image_size 80 \
+  --target_modality pet \
+  --pred_mode vp
+```
 
 ## Acknowlegements
 
-The codebase is inspired by [alexzhou907/DDBM](https://github.com/alexzhou907/DDBM) and [DiT-3D/DiT-3D](https://github.com/DiT-3D/DiT-3D). Thanks for their wonderful works.
+The codebase is inspired by [[Yiiitong/SiM2P]([https://github.com/alexzhou907/DDBM](https://github.com/Yiiitong/SiM2P))
 
 
 ## References
@@ -102,5 +113,4 @@ If you find this method and/or code useful, please consider giving a star 🌟 a
   year={2025}
 }
 ```
-
 
