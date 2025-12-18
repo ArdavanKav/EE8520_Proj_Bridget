@@ -1,10 +1,6 @@
 # EE8520_Proj_Bridget
 MRI2PET using BBDM project
 
-# Diffusion Bridge Networks to translate PET from MRI
-
-Official Implementation of **SiM2P** - a diffusion bridge framework for synthesizing high-quality PET scans from MRI for dementia diagnostics.
-
 ### [Project Page](https://yiiitong.github.io/SiM2P/) | [Paper](https://arxiv.org/abs/2510.15556)
 
 <p align="center">
