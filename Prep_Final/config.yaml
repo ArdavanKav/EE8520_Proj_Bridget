@@ -1,0 +1,13 @@
+data:
+  mcsa_root: "/data/shared_data/Alz/MCSA/MCSA"
+  output_dir: "/data/shared_data/Alz/MCSA/processed"
+
+processing:
+  mni_template: "MNI152_T1_1mm_brain.nii.gz"
+  bet_frac: 0.35
+  n_jobs: 4
+
+qc:
+  min_brain_volume_ml: 900
+  max_motion_mm: 2.0
+  min_correlation: 0.5

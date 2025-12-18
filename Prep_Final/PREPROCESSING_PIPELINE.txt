@@ -1,0 +1,318 @@
+# MRI-PET Preprocessing Pipeline Documentation
+
+## Overview
+
+This preprocessing pipeline prepares T1-weighted MRI and PiB-PET images for the SiM2P (Simulating MRI to PET) deep learning model. The pipeline converts raw DICOM data to standardized, co-registered, normalized NIfTI volumes with dimensions 80×80×80 at 2.25mm isotropic resolution.
+
+---
+
+## Pipeline Flowchart
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         INPUT DATA                                          │
+│  ┌─────────────────────┐              ┌─────────────────────┐               │
+│  │  T1-weighted MRI    │              │     PiB-PET         │               │
+│  │  (DICOM format)     │              │  (DICOM format)     │               │
+│  └──────────┬──────────┘              └──────────┬──────────┘               │
+└─────────────┼────────────────────────────────────┼──────────────────────────┘
+              │                                    │
+              ▼                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STEP 0: DICOM to NIfTI Conversion                                          │
+│  ─────────────────────────────────                                          │
+│  • Tool: dcm2niix                                                           │
+│  • Convert DICOM series to NIfTI format (.nii.gz)                           │
+│  • Output: mri.nii.gz, pet.nii.gz                                           │
+└─────────────┬────────────────────────────────────┬──────────────────────────┘
+              │                                    │
+              ▼                                    │
+┌─────────────────────────────────┐                │
+│  STEP 1: MRI Skull Stripping    │                │
+│  ───────────────────────────────│                │
+│  • Tool: FSL BET                │                │
+│  • Parameter: f=0.35            │                │
+│  • Bias field correction        │                │
+│  • Output:                      │                │
+│    - brain.nii.gz               │                │
+│    - brain_mask.nii.gz          │                │
+│  • QC: Brain volume > 800 ml    │                │
+└─────────────┬───────────────────┘                │
+              │                                    │
+              ▼                                    │
+┌─────────────────────────────────┐                │
+│  STEP 2: MRI to MNI Registration│                │
+│  ───────────────────────────────│                │
+│  • Tool: ANTsPy                 │                │
+│  • Transform: SyN (nonlinear)   │                │
+│  • Template: MNI152 1mm         │                │
+│  • Output:                      │                │
+│    - mri_mni.nii.gz             │                │
+│    - mask_mni.nii.gz            │                │
+│    - forward_transforms         │                │
+│  • QC: Correlation > 0.7        │                │
+└─────────────┬───────────────────┘                │
+              │                                    │
+              │                                    ▼
+              │                    ┌─────────────────────────────────┐
+              │                    │  STEP 3: PET Motion Correction  │
+              │                    │  ───────────────────────────────│
+              │                    │  • 4D PET → frame averaging     │
+              │                    │  • Rigid registration between   │
+              │                    │    frames                       │
+              │                    │  • Output: pet_avg.nii.gz       │
+              │                    │  • QC: Max motion < 5mm         │
+              │                    └─────────────┬───────────────────┘
+              │                                  │
+              │                                  ▼
+              │                    ┌─────────────────────────────────┐
+              │                    │  STEP 4: PET to MRI Coregistr.  │
+              │                    │  ───────────────────────────────│
+              │◄───────────────────│  • Tool: ANTsPy                 │
+              │   (uses MRI brain) │  • Transform: Rigid             │
+              │                    │  • Reference: MRI brain         │
+              │                    │  • Output: pet_coreg.nii.gz     │
+              │                    └─────────────┬───────────────────┘
+              │                                  │
+              ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STEP 5: Transform PET to MNI Space                                         │
+│  ───────────────────────────────────                                         │
+│  • Apply MRI→MNI transforms to coregistered PET                             │
+│  • Uses forward transforms from Step 2                                       │
+│  • Output: pet_mni.nii.gz                                                    │
+└─────────────────────────────────────────────────┬───────────────────────────┘
+                                                  │
+                                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STEP 6: Compute SUVR (Standardized Uptake Value Ratio)                     │
+│  ──────────────────────────────────────────────────────                     │
+│  • Reference region: Cerebellar gray matter                                  │
+│  • SUVR = PET_voxel / mean(PET_cerebellum)                                   │
+│  • Cerebellar mask from Harvard-Oxford atlas                                 │
+│  • Output: pet_suvr_mni.nii.gz                                               │
+│  • Typical global SUVR: 1.0-2.0                                              │
+└─────────────────────────────────────────────────┬───────────────────────────┘
+                                                  │
+              ┌───────────────────────────────────┴───────────────────────────┐
+              │                                                               │
+              ▼                                                               ▼
+┌─────────────────────────────────┐              ┌─────────────────────────────────┐
+│  STEP 7: Resample MRI to 1.5mm  │              │  STEP 8: Resample PET to 1.5mm  │
+│  ───────────────────────────────│              │  ───────────────────────────────│
+│  • Target spacing: 1.5mm iso    │              │  • Target spacing: 1.5mm iso    │
+│  • Interpolation: cubic (order=3)              │  • Interpolation: cubic (order=3)
+│  • Output shape: ~121×145×121   │              │  • Output: pet_suvr_1.5mm.nii.gz│
+│  • Output: mri_mni_1.5mm.nii.gz │              └─────────────┬───────────────────┘
+└─────────────┬───────────────────┘                            │
+              │                                                ▼
+              │                    ┌─────────────────────────────────┐
+              │                    │  STEP 9: Gaussian Smoothing     │
+              │                    │  ───────────────────────────────│
+              │                    │  • FWHM: 4mm                    │
+              │                    │  • Harmonization for multi-site │
+              │                    │  • Output: pet_suvr_4mm.nii.gz  │
+              │                    └─────────────┬───────────────────┘
+              │                                  │
+              │                                  ▼
+              │                    ┌─────────────────────────────────┐
+              │                    │  STEP 10: Normalize SUVR 0-1    │
+              │                    │  ───────────────────────────────│
+              │                    │  • Use brain mask statistics    │
+              │                    │  • vmin = 1st percentile        │
+              │                    │  • vmax = 99th percentile       │
+              │                    │  • Clip to [0, 1] range         │
+              │                    │  • Output: pet_norm.nii.gz      │
+              │                    └─────────────┬───────────────────┘
+              │                                  │
+              ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STEP 11: Apply Brain Mask                                                   │
+│  ─────────────────────────────                                               │
+│  • Resample mask to 1.5mm (nearest neighbor, order=0)                        │
+│  • Apply Gaussian smoothing to mask edges (sigma=0.8)                        │
+│  • Threshold at 0.5 for binary mask                                          │
+│  • Set non-brain voxels to 0                                                 │
+│  • Output: mri_masked.nii.gz, pet_masked.nii.gz                              │
+└─────────────────────────────────────────────────┬───────────────────────────┘
+                                                  │
+                                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STEP 12: Crop to 120×128×120                                                │
+│  ────────────────────────────────                                            │
+│  • From ~121×145×121 to 120×128×120                                          │
+│  • Cropping strategy:                                                        │
+│    - Dim 0 (L-R): 121→120, crop 1 from end                                   │
+│    - Dim 1 (P-A): 145→128, crop 8 start, 9 end                               │
+│    - Dim 2 (I-S): 121→120, crop 1 from end                                   │
+│  • Center-aligned cropping                                                   │
+│  • Output: mri_cropped.nii.gz, pet_cropped.nii.gz                            │
+└─────────────────────────────────────────────────┬───────────────────────────┘
+                                                  │
+              ┌───────────────────────────────────┴───────────────────────────┐
+              │                                                               │
+              ▼                                                               ▼
+┌─────────────────────────────────┐              ┌─────────────────────────────────┐
+│  STEP 13: Resize MRI to 80³    │              │  STEP 14: Resize PET to 80³    │
+│  ───────────────────────────────│              │  ───────────────────────────────│
+│  • From 120×128×120 to 80×80×80 │              │  • From 120×128×120 to 80×80×80 │
+│  • Interpolation: cubic (order=3)              │  • Interpolation: cubic (order=3)
+│  • Clip negative values to 0    │              │  • Clip negative values to 0    │
+│  • Final spacing: 2.25mm iso    │              │  • Final spacing: 2.25mm iso    │
+│  • Output: MRI_final.nii.gz     │              │  • Output: PET_final.nii.gz     │
+└─────────────┬───────────────────┘              └─────────────┬───────────────────┘
+              │                                                │
+              └───────────────────────────────────┬────────────┘
+                                                  │
+                                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FINAL OUTPUT                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  MRI_final.nii.gz                 PET_final.nii.gz                  │    │
+│  │  ────────────────                 ─────────────────                 │    │
+│  │  • Shape: 80×80×80                • Shape: 80×80×80                 │    │
+│  │  • Spacing: 2.25mm isotropic      • Spacing: 2.25mm isotropic       │    │
+│  │  • Space: MNI152                  • Space: MNI152                   │    │
+│  │  • Skull-stripped                 • SUVR normalized (0-1)           │    │
+│  │  • Brain-masked                   • Brain-masked                    │    │
+│  │                                   • 4mm FWHM smoothed               │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Technical Specifications
+
+### Input Requirements
+| Modality | Format | Requirements |
+|----------|--------|--------------|
+| MRI | DICOM | T1-weighted, 3D MP-RAGE |
+| PET | DICOM | PiB tracer, CTAC corrected |
+
+### Output Specifications
+| Parameter | Value |
+|-----------|-------|
+| Dimensions | 80 × 80 × 80 |
+| Voxel size | 2.25 mm isotropic |
+| Coordinate space | MNI152 |
+| Data type | float32 |
+| File format | NIfTI (.nii.gz) |
+
+### Processing Parameters
+| Step | Parameter | Value |
+|------|-----------|-------|
+| Skull stripping | BET fraction | 0.35 |
+| Registration | Transform type | SyN (nonlinear) |
+| PET coregistration | Transform type | Rigid |
+| Intermediate spacing | Voxel size | 1.5 mm isotropic |
+| PET smoothing | FWHM | 4 mm |
+| SUVR normalization | Percentile range | 1-99% |
+| Mask smoothing | Gaussian sigma | 0.8 voxels |
+| Final interpolation | Order | 3 (cubic) |
+| Mask interpolation | Order | 0 (nearest neighbor) |
+
+---
+
+## Quality Control Thresholds
+
+| Check | Threshold | Action if Failed |
+|-------|-----------|------------------|
+| Brain volume | > 800 ml | Reject case |
+| MNI correlation | > 0.7 | Reject case |
+| Max PET motion | < 5 mm | Warning only |
+| SUVR range | 0.5 - 3.0 | Warning only |
+
+---
+
+## File Structure
+
+```
+/data/shared_data/Alz/MCSA/processed/
+└── MCSA_XXXXX/
+    └── YYYY-MM-DD/
+        ├── MRI_final.nii.gz      # Final MRI (80×80×80)
+        ├── PET_final.nii.gz      # Final PET (80×80×80)
+        └── visualization_final.png  # QC visualization
+```
+
+---
+
+## Code Structure (Prep_Final/)
+
+```
+Prep_Final/
+├── run_pipeline.py      # Main pipeline orchestrator
+├── config.yaml          # Configuration parameters
+├── dicom_utils.py       # DICOM to NIfTI conversion
+├── mri_utils.py         # Skull stripping, bias correction
+├── pet_utils.py         # Motion correction, coregistration
+├── registration.py      # ANTsPy registration functions
+├── suvr.py              # SUVR computation
+├── final_prep.py        # Resampling, smoothing, cropping, resizing
+├── visualize_final.py   # Visualization generation
+├── templates/           # MNI152 template, atlas masks
+├── pipeline_log_*.log   # Processing logs
+└── failed_cases.csv     # List of failed cases
+```
+
+---
+
+## Key Functions
+
+### final_prep.py
+- `resample_to_spacing()` - Resample to target voxel size
+- `apply_gaussian_smoothing()` - Apply FWHM smoothing
+- `normalize_suvr_0_to_1_no_mask()` - Normalize SUVR to 0-1
+- `apply_brain_mask()` - Zero out non-brain voxels
+- `crop_to_size()` - Center crop to target dimensions
+- `resize_to_shape()` - Resize with cubic interpolation
+- `resize_mask_to_shape()` - Resize mask with nearest neighbor
+
+### suvr.py
+- `compute_suvr()` - Calculate SUVR using cerebellar reference
+
+### registration.py
+- `register_to_mni()` - SyN registration to MNI space
+- `apply_transform_to_pet()` - Apply transforms to PET
+
+---
+
+## Parallel Processing
+
+The pipeline supports parallel processing using Python's `ProcessPoolExecutor`:
+
+```bash
+# Run with 96 workers on 96-core CPU
+python run_pipeline.py --workers 96
+
+# Limit to specific number of cases
+python run_pipeline.py --workers 40 --limit 100
+
+# Process single subject
+python run_pipeline.py --subject MCSA_00003
+```
+
+---
+
+## Visualization
+
+The visualization script creates a 3-row × 5-column image:
+- **Row 1**: MRI axial slices (grayscale)
+- **Row 2**: Split view (left=PET, right=MRI)
+- **Row 3**: PET axial slices (jet colormap)
+
+```bash
+python visualize_final.py MCSA_00003 1953-12-31
+```
+
+---
+
+## Changelog
+
+### Version 1.0 (December 2025)
+- Initial pipeline implementation
+- 14-step processing workflow
+- Parallel processing support (up to 96 workers)
+- Jet colormap for PET visualization
+- Failed cases logging to CSV
