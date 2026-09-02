@@ -102,15 +102,4 @@ This work builds upon the following foundational research:
 3. **Zhou, L., Lou, A., Khanna, S., & Ermon, S.** (2024). Denoising Diffusion Bridge Models. *International Conference on Learning Representations (ICLR)*.
 
 
-## Citation
-
-If you find this method and/or code useful, please consider giving a star 🌟 and citing the paper:
-```
-@article{li2025diffusion,
-  title={Diffusion Bridge Networks Simulate Clinical-grade PET from MRI for Dementia Diagnostics},
-  author={Li, Yitong and Buchert, Ralph and Schmitz-Koep, Benita and Grimmer, Timo and Ommer, Bj{\"o}rn and Hedderich, Dennis M and Yakushev, Igor and Wachinger, Christian},
-  journal={arXiv preprint arXiv:2510.15556},
-  year={2025}
-}
-```
 
